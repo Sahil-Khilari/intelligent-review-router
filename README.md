@@ -142,3 +142,24 @@ uv run streamlit run streamlit_app.py
 ```powershell
 uv run pytest tests/
 ```
+
+---
+
+## 🐳 Docker Deployment
+
+Run both the FastAPI Backend & Streamlit Frontend together using Docker Compose:
+
+```powershell
+# Build and launch all services in detached mode
+docker-compose up --build -d
+
+# View container logs
+docker-compose logs -f
+
+# Stop container services
+docker-compose down
+```
+
+- **FastAPI Backend**: `http://localhost:8000/docs`
+- **Streamlit Web UI**: `http://localhost:8501`
+
