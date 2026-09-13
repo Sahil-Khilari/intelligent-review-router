@@ -212,7 +212,7 @@ if nav_choice == "🔍 Live Review Analyzer":
                 
             st.markdown("### 🔀 Routing Matrix")
             df_route = pd.DataFrame(res["routing"])
-            st.dataframe(df_route, use_container_width=True)
+            st.dataframe(df_route, width='stretch')
             
             # Create Ticket Option
             st.markdown("---")
@@ -259,7 +259,7 @@ elif nav_choice == "📁 Batch Review Inspector":
             
     if not batch_df.empty:
         st.write(f"Loaded **{len(batch_df)}** reviews for batch processing.")
-        st.dataframe(batch_df[['review_id', 'review', 'sentiment', 'priority']].head(10) if 'review_id' in batch_df.columns else batch_df.head(10), use_container_width=True)
+        st.dataframe(batch_df[['review_id', 'review', 'sentiment', 'priority']].head(10) if 'review_id' in batch_df.columns else batch_df.head(10), width='stretch')
         
         if st.button("⚡ Run Batch Analysis"):
             results = []
@@ -280,7 +280,7 @@ elif nav_choice == "📁 Batch Review Inspector":
                 
             res_df = pd.DataFrame(results)
             st.success("Batch analysis complete!")
-            st.dataframe(res_df, use_container_width=True)
+            st.dataframe(res_df, width='stretch')
             
             csv_data = res_df.to_csv(index=False).encode('utf-8')
             st.download_button(
@@ -331,7 +331,7 @@ elif nav_choice == "🎫 Support Ticket Desk":
                     "Summary": t.summary,
                     "Created At": t.created_at.strftime("%Y-%m-%d %H:%M") if t.created_at else ""
                 })
-            st.dataframe(pd.DataFrame(ticket_data), use_container_width=True)
+            st.dataframe(pd.DataFrame(ticket_data), width='stretch')
             
             st.markdown("---")
             st.subheader("✏️ Quick Update Ticket Status")
@@ -390,7 +390,7 @@ elif nav_choice == "📊 Analytics & Insights":
                 
             st.subheader("Priority Distribution by Department")
             ct = pd.crosstab(df_analytics['department'], df_analytics['priority'])
-            st.dataframe(ct, use_container_width=True)
+            st.dataframe(ct, width='stretch')
         else:
             st.info("Dataset analytics file not found.")
     finally:
