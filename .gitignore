@@ -49,3 +49,12 @@ Thumbs.db
 
 raw/
 processed/
+
+# Generated corpora and trained artifacts (rebuild with the scripts)
+/data/raw/
+/data/processed/
+/data/real/
+/models/
+_export_fallback/
+*.db-wal
+*.db-shm
