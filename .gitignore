@@ -58,3 +58,4 @@ processed/
 _export_fallback/
 *.db-wal
 *.db-shm
+/checkpoints/
