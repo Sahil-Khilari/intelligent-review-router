@@ -6,10 +6,21 @@ services:
     container_name: review_router_backend
     ports:
       - "8000:8000"
+    environment:
+      # The database lives on the volume, not beside the source. The previous
+      # mount targeted /app/app/db - the package directory - which persisted
+      # nothing and shadowed database.py and models.py with stale copies.
+      - DATABASE_URL=sqlite:////data/ecommerce_router.db
     volumes:
       - ./data:/app/data
       - ./app/models/trained_model:/app/app/models/trained_model
-      - sqlite_data:/app/app/db
+      - sqlite_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
     restart: unless-stopped
 
   frontend:
@@ -21,8 +32,16 @@ services:
       - "8501:8501"
     environment:
       - API_URL=http://backend:8000
+      - DATABASE_URL=sqlite:////data/ecommerce_router.db
+    volumes:
+      - ./data:/app/data
+      - ./app/models/trained_model:/app/app/models/trained_model
+      # Shares the backend's database so the ticket desk shows tickets the
+      # API created. Previously each container had its own SQLite file.
+      - sqlite_data:/data
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:

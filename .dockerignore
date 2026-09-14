@@ -6,9 +6,19 @@ venv/
 env/
 .git/
 .gitignore
+.github/
 .ipynb_checkpoints/
 distilbert_checkpoints/
 *.log
 scratch/
 tmp/
 .env
+
+# Not needed at runtime; these were previously baked into both images.
+notebooks/
+tests/
+paper/
+.agents/
+data/raw/
+*.db
+*.sqlite3
