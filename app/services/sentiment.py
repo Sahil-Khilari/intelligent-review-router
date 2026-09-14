@@ -14,25 +14,45 @@ class SentimentAnalyzer:
         self.tokenizer = None
         self.hf_model = None
         self.label_map = {0: "Negative", 1: "Neutral", 2: "Positive"}
-        
+        self.model_path = None
+        self.weights_missing = False
+
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         
         transformer_path = model_dir or os.path.join(base_dir, "models", "trained_model", "sentiment")
         baseline_path = os.path.join(base_dir, "models", "trained_model", "baseline")
         
-        # Try loading Hugging Face transformer first
-        if os.path.exists(os.path.join(transformer_path, "config.json")):
+        # Weights are deliberately not committed (see .gitignore), so presence
+        # is decided by the weights file, not by config.json. Gating on the
+        # metadata meant an untrained checkout entered the transformer branch,
+        # raised inside from_pretrained, and degraded to TF-IDF in silence.
+        self.weights_missing = os.path.exists(os.path.join(transformer_path, "config.json")) \
+            and not self._has_weights(transformer_path)
+
+        if self.weights_missing:
+            print(
+                f"[SentimentAnalyzer] No trained weights in {transformer_path} - "
+                "serving the TF-IDF baseline. Run: uv run python train_transformer.py"
+            )
+            if os.getenv("STRICT_MODEL", "").lower() in ("1", "true", "yes"):
+                raise RuntimeError(
+                    f"STRICT_MODEL is set and no transformer weights were found in "
+                    f"{transformer_path}. Run train_transformer.py or unset STRICT_MODEL."
+                )
+
+        if self._has_weights(transformer_path):
             try:
                 from transformers import AutoTokenizer, AutoModelForSequenceClassification
                 self.tokenizer = AutoTokenizer.from_pretrained(transformer_path)
                 self.hf_model = AutoModelForSequenceClassification.from_pretrained(transformer_path)
                 self.hf_model.eval()
                 self.model_type = "transformer"
+                self.model_path = transformer_path
                 print(f"[SentimentAnalyzer] Loaded fine-tuned Transformer model from {transformer_path}")
                 return
             except Exception as e:
                 print(f"[SentimentAnalyzer] Failed to load Transformer: {e}. Falling back to baseline.")
-                
+
         # Fallback to TF-IDF Baseline model
         vec_file = os.path.join(baseline_path, "tfidf_vectorizer.joblib")
         model_file = os.path.join(baseline_path, "baseline_model.joblib")
@@ -48,6 +68,22 @@ class SentimentAnalyzer:
                 self._build_inmemory_fallback()
         else:
             self._build_inmemory_fallback()
+
+    @staticmethod
+    def _has_weights(path: str) -> bool:
+        return any(
+            os.path.exists(os.path.join(path, name))
+            for name in ("model.safetensors", "pytorch_model.bin", "tf_model.h5")
+        )
+
+    def describe(self) -> dict:
+        """Which model is actually answering. Surfaced by /health."""
+        return {
+            "model_type": self.model_type,
+            "transformer_loaded": self.hf_model is not None,
+            "weights_missing": self.weights_missing,
+            "model_path": self.model_path,
+        }
 
     def _build_inmemory_fallback(self):
         from sklearn.feature_extraction.text import TfidfVectorizer
@@ -80,14 +116,17 @@ class SentimentAnalyzer:
                 pred_id = int(np.argmax(probs))
                 conf = float(probs[pred_id])
                 
-            sentiment = self.hf_model.config.id2label.get(pred_id, self.label_map.get(pred_id, "Neutral"))
+            id2label = self.hf_model.config.id2label
+            sentiment = id2label.get(pred_id, self.label_map.get(pred_id, "Neutral"))
+            # Label names come from the model config rather than a hardcoded
+            # 0/1/2 ordering, so `sentiment` and `probabilities` cannot disagree
+            # if a future model is trained with a different label order.
             return {
                 "sentiment": sentiment,
                 "confidence": round(conf, 4),
                 "probabilities": {
-                    "Negative": round(float(probs[0]), 4) if len(probs) > 0 else 0.0,
-                    "Neutral": round(float(probs[1]), 4) if len(probs) > 1 else 0.0,
-                    "Positive": round(float(probs[2]), 4) if len(probs) > 2 else 0.0
+                    id2label.get(i, self.label_map.get(i, str(i))): round(float(p), 4)
+                    for i, p in enumerate(probs)
                 },
                 "model_type": "transformer"
             }

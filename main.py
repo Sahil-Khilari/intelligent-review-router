@@ -32,6 +32,25 @@ def root():
         "docs_url": "/docs"
     }
 
+
+@app.get("/health", summary="Liveness and model readiness")
+def health():
+    """
+    Reports which sentiment model is actually answering.
+
+    The service stays up on the TF-IDF baseline when transformer weights are
+    absent, so "is it running" and "is it running the model I think" are
+    different questions. This answers the second one.
+    """
+    from app.api.routes import sentiment_analyzer
+
+    model = sentiment_analyzer.describe()
+    return {
+        "status": "ok",
+        "degraded": model["model_type"] != "transformer",
+        "model": model,
+    }
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
