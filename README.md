@@ -4,58 +4,50 @@ An end-to-end NLP intelligence platform and automated customer support ticket ro
 
 ---
 
-## 🏗️ End-to-End Architecture & Flow
+## 🏗️ Pipeline
 
 ```mermaid
 flowchart TD
-    A[Customer Review Input] --> B[Text Preprocessing & Sentence Clause Splitter]
-    
-    subgraph ML_Intelligence_Layer ["ML & NLP Intelligence Layer"]
-        B --> C[DistilBERT Fine-Tuned Sentiment Classifier]
-        B --> D[Aspect Term & Opinion Extractor ATE/APC]
-        
-        C -->|Overall Sentiment & Confidence| E[Intelligence Payload]
-        D -->|Aspects, Opinions & Aspect Sentiments| E
-    end
-
-    subgraph Business_Routing_Layer ["Business Routing & Priority Engine"]
-        E --> F[Support Router Logic]
-        F -->|Map Aspects to Depts| G[Logistics / Refunds / Payments / Product Support / Returns / CS]
-        F -->|Calculate Urgency| H[Priority: LOW / MEDIUM / HIGH / URGENT]
-        G & H --> I[Actionable Support Ticket Payload]
-    end
-
-    subgraph Persistence_API_Layer ["Database & API Backend"]
-        I --> J[FastAPI REST API /api/v1/analyze]
-        J --> K[(SQLite DB: ecommerce_router.db)]
-    end
-
-    subgraph Frontend_UI_Layer ["Interactive Dashboard"]
-        K <--> L[Streamlit Web UI: Live Analyzer, Support Desk Queue, Batch Inspector, Analytics]
-    end
+    A[Customer Review] --> S[Sentiment model<br/>DeBERTa-v3, Amazon Reviews 2023]
+    A --> T[ATE model<br/>token classification, BIO<br/>SemEval-2014]
+    T --> P[APC model<br/>sentence-pair polarity<br/>per extracted aspect]
+    T --> M[Category mapper<br/>embedding similarity<br/>aspect term to department]
+    S --> R[SupportRouter<br/>business rules]
+    P --> R
+    M --> R
+    R --> D[Department + Priority]
+    D --> API[FastAPI /api/v1/analyze]
+    API --> DB[(SQLite / Postgres)]
+    DB <--> UI[Streamlit dashboard]
 ```
+
+Three trained models, not a keyword lexicon:
+
+| Stage | Model | Trained on |
+| :--- | :--- | :--- |
+| Aspect term extraction | DeBERTa-v3-base, token classification | SemEval-2014 Task 4 |
+| Aspect polarity | DeBERTa-v3-base, sentence-pair | SemEval-2014 Task 4 |
+| Review sentiment | DeBERTa-v3-base | Amazon Reviews 2023 |
+| Term to department | all-MiniLM-L6-v2 similarity | no training; prototype phrases |
+
+Polarity is conditioned on the aspect, so "the phone is great but delivery was
+late" resolves per aspect without clause-splitting heuristics. The keyword
+lexicon remains only as a fallback when model artifacts are absent.
 
 ---
 
-## 🧠 DistilBERT Fine-Tuning & Classification Head Architecture
+## ⚡ Requirements
 
-```mermaid
-flowchart LR
-    subgraph Input_Stage ["1. Input Encoding"]
-        T["Raw Review Text\n'Delivery was late and item broken'"] --> Tok["DistilBert Tokenizer"]
-        Tok --> ID["Token IDs & Attention Masks\n[101, 2637, 2001, 2397, 102]"]
-    end
+**Models run on GPU.** Training, evaluation and inference assert CUDA and fail
+with an actionable message if it is missing — there is no silent CPU execution.
+The only exception is `pytest`, which sets `ALLOW_CPU=1` so CI can run on
+GPU-less runners.
 
-    subgraph Backbone_Stage ["2. Pretrained DistilBERT Backbone"]
-        ID --> DB["Pretrained DistilBERT\n(6 Transformer Encoder Layers, 768-dim embeddings)"]
-        DB --> CLS["CLS Token Representation Vector\n(Shape: 1 x 768)"]
-    end
+Install torch from the CUDA index (already configured in `pyproject.toml`):
 
-    subgraph Head_Stage ["3. 3-Class Classification Head"]
-        CLS --> Dense["Linear Layer\n(in: 768 -> out: 3)"]
-        Dense --> Softmax["Softmax Probability Activation"]
-        Softmax --> Out["Sentiment Probabilities:\n- Negative: 94.2%\n- Neutral: 4.1%\n- Positive: 1.7%"]
-    end
+```powershell
+uv sync --group dev
+python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
 ```
 
 ---
@@ -116,32 +108,84 @@ ecommerce-review-router/
 
 ---
 
-## 🏃 Quick Start Guide
+## 🏃 Quick Start
 
-### 1. Generate Dataset & Train Transformer Model
+### 1. Get the models
+
+Training happens once on a GPU machine; everything else downloads.
+
 ```powershell
-# Generate dataset
-uv run python data/build_dataset.py
+# Already trained and published:
+python scripts/download_models.py --user <your-hf-username>
 
-# Fine-tune DistilBERT Transformer
-uv run python train_transformer.py
+# Or train them (see Training below)
 ```
 
-### 2. Launch FastAPI Backend
+### 2. Run the backend
+
 ```powershell
 uv run uvicorn main:app --reload --port 8000
 ```
-- Interactive Swagger API Docs: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
 
-### 3. Launch Streamlit Web UI
+- Swagger: http://127.0.0.1:8000/docs
+- Health:  http://127.0.0.1:8000/health — reports which models are live, on
+  which device, and sets `degraded: true` if any are missing.
+
+### 3. Run the dashboard
+
 ```powershell
 uv run streamlit run streamlit_app.py
 ```
 
-### 4. Run Automated Test Suite
+### 4. Tests
+
 ```powershell
 uv run pytest tests/
 ```
+
+---
+
+## 🎓 Training
+
+Run the smoke profile first. It takes about two minutes and proves the whole
+pipeline executes before any real GPU time is spent.
+
+```powershell
+python data/fetch_real_datasets.py --profile smoke
+python train_all.py --profile smoke
+```
+
+Then the real run — one command, three models, published to the Hub:
+
+```powershell
+python data/fetch_real_datasets.py --profile 4090
+python train_all.py --profile 4090 --push-to-user <your-hf-username>
+```
+
+Profiles: `4090`, `t4`, `3050`, `smoke`. For Colab (T4), open
+[`notebooks/train_on_colab.ipynb`](notebooks/train_on_colab.ipynb) — it calls
+the same code, so results match.
+
+Evaluate on real held-out data:
+
+```powershell
+python eval/evaluate_real.py
+```
+
+---
+
+## 📊 On the numbers
+
+The previous pipeline reported **0.9633 accuracy**. That figure was measured on
+a corpus generated from ~100 template phrases where **31.7% of the test split
+appeared verbatim in training** — it measured memorisation.
+
+Evaluated on real Amazon reviews, that same model scores **0.60**.
+
+Real-data scores will therefore look lower than the old ones and are worth more:
+SemEval-2014 is a published benchmark, so aspect extraction and polarity numbers
+are comparable to the literature, and `data/fetch_real_datasets.py` asserts zero
+train/test overlap as a hard failure rather than reporting it after the fact.
 
 ---
 
