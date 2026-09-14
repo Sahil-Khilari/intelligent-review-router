@@ -1,6 +1,8 @@
 # ⚡ Intelligent E-Commerce Review Analyzer & Support Router
 
-An end-to-end NLP intelligence platform and automated customer support ticket router that ingests customer review text, performs sentiment classification using fine-tuned **DistilBERT**, extracts fine-grained aspect opinions (ABSA), calculates ticket priority, and dispatches tickets to target support departments via FastAPI, SQLAlchemy, and Streamlit.
+An aspect-based sentiment analysis pipeline that reads a customer review, extracts the specific things it complains about, decides how the customer feels about each one, and routes a prioritised ticket to the right support department.
+
+Three trained transformer models do the work: aspect term extraction and aspect polarity (both on **SemEval-2014 Task 4**, the standard ABSA benchmark) plus review-level sentiment (on **Amazon Reviews 2023**). Served through FastAPI + SQLAlchemy with a Streamlit dashboard.
 
 ---
 
