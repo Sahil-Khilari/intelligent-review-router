@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Generate dataset
+        run: uv run python data/build_dataset.py
+
+      # Weights are deliberately not in the repo, so CI runs against the
+      # TF-IDF baseline. The suite must pass on whichever model is served -
+      # that is the point of the accuracy floor in test_sentiment.py.
+      - name: Run tests
+        run: uv run pytest tests/ -q
+
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          tags: review-router-backend:ci
+
+      - name: Build frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.streamlit
+          push: false
+          tags: review-router-frontend:ci
