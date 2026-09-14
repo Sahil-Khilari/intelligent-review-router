@@ -80,8 +80,8 @@ flowchart LR
 ```
 ecommerce-review-router/
 │
+├── main.py                         # FastAPI app, CORS, / and /health
 ├── app/
-│   ├── main.py                     # FastAPI Application lifecycle & CORS setup
 │   ├── api/
 │   │   └── routes.py               # REST API Endpoints (/analyze, /tickets, /analytics)
 │   ├── services/
@@ -97,9 +97,7 @@ ecommerce-review-router/
 │       └── models.py               # Database ORM schema (ReviewAnalysis, SupportTicket)
 │
 ├── data/
-│   ├── build_dataset.py            # Dataset generator script
-│   ├── raw/                        # Raw CSV reviews
-│   └── processed/                  # Processed 1,500 e-commerce review dataset
+│   └── build_dataset.py            # Dataset generator (run this first; CSVs are gitignored)
 │
 ├── notebooks/
 │   ├── 01_eda.ipynb                # Exploratory Data Analysis & visual plots
@@ -107,12 +105,55 @@ ecommerce-review-router/
 │   ├── 03_transformer_sentiment.ipynb # DistilBERT Transformer fine-tuning
 │   └── 04_aspect_extraction.ipynb  # Aspect Term & Polarity Classification
 │
-├── tests/                          # Automated Pytest suite (11 unit & integration tests)
+├── tests/                          # Pytest suite (48 unit, regression & integration tests)
+├── .github/workflows/ci.yml        # Tests + image builds on every PR
 ├── train_transformer.py            # Fine-tuning CLI script for DistilBERT
 ├── streamlit_app.py                # Interactive Streamlit Web UI Dashboard
 ├── pyproject.toml                  # Project metadata & dependencies
 └── README.md
 ```
+
+---
+
+## 📊 Measured Results
+
+Held-out split of 300 reviews (`test_size=0.2, random_state=42`, stratified).
+Reproduce with `.venv/Scripts/python.exe paper/evaluate_pipeline.py`.
+
+| Stage | Metric | Value |
+| :--- | :--- | :--- |
+| Sentiment (DistilBERT) | accuracy / weighted F1 | 0.9633 / 0.9641 |
+| Sentiment (TF-IDF baseline) | accuracy / weighted F1 | 0.9600 / 0.9606 |
+| Aspect extraction | micro P / R / F1 | 0.8971 / 0.7863 / 0.8380 |
+| Department routing | accuracy | 0.7733 |
+| Priority | accuracy | 0.9000 |
+| Priority | under-escalation rate | 0.0067 |
+| End-to-end | mean / p95 latency | 42.9 ms / 73.3 ms |
+
+**Note on the corpus.** The dataset is generated from templates, and 31.7% of
+held-out reviews appear verbatim in train. Scores on it are therefore an upper
+bound and should not be read as performance on organic reviews.
+
+---
+
+## 🧠 Model Artifacts
+
+Trained weights are **not** committed (see `.gitignore`). Build them locally:
+
+```powershell
+uv run python data/build_dataset.py
+uv run python train_transformer.py
+```
+
+Until then the service runs the committed TF-IDF baseline and says so. Check
+which model is live at any time:
+
+```powershell
+curl http://127.0.0.1:8000/health
+```
+
+`degraded: true` means the transformer is not loaded. Set `STRICT_MODEL=1` to
+make a missing-weights start fail instead of serving the baseline.
 
 ---
 
