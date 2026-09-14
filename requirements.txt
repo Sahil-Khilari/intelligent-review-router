@@ -320,11 +320,14 @@ referencing==0.37.0
     #   jsonschema
     #   jsonschema-specifications
 regex==2026.9.10
-    # via transformers
+    # via
+    #   tiktoken
+    #   transformers
 requests==2.34.2
     # via
     #   datasets
     #   streamlit
+    #   tiktoken
 rich==15.0.0
     # via typer
 rpds-py==2026.6.3
@@ -348,6 +351,8 @@ seaborn==0.13.2
     # via ecommerce-review-router
 sentence-transformers==6.0.1
     # via ecommerce-review-router
+sentencepiece==0.2.2
+    # via ecommerce-review-router
 seqeval==1.2.2
     # via ecommerce-review-router
 setuptools==84.0.0
@@ -370,6 +375,8 @@ sympy==1.14.0
     # via torch
 threadpoolctl==3.6.0
     # via scikit-learn
+tiktoken==0.14.0
+    # via ecommerce-review-router
 tokenizers==0.23.2
     # via
     #   sentence-transformers

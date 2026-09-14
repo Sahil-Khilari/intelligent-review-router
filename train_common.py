@@ -6,6 +6,7 @@ notebook only sequence calls into them, so the two venues cannot drift apart.
 """
 
 import json
+import math
 import os
 import shutil
 from dataclasses import dataclass, field, asdict
@@ -78,6 +79,38 @@ def config_for(profile: str, task: str, **overrides) -> TrainConfig:
     for key, value in overrides.items():
         setattr(cfg, key, value)
     return cfg
+
+
+def warmup_steps_for(n_examples: int, cfg: "TrainConfig") -> int:
+    """
+    transformers 5 removed warmup_ratio, keeping only warmup_steps, so the
+    ratio is converted here once instead of in each trainer.
+    """
+    per_step = max(1, cfg.batch_size * cfg.grad_accum)
+    steps_per_epoch = math.ceil(n_examples / per_step)
+    total = max(1, steps_per_epoch * cfg.epochs)
+    return max(0, int(total * cfg.warmup_ratio))
+
+
+def load_model_fp32(auto_class, model_name: str, **kwargs):
+    """
+    Loads a model in float32, explicitly.
+
+    transformers 5 honours the checkpoint's stored dtype, and
+    microsoft/deberta-v3-base stores float16. Training that under AMP raises
+    "Attempting to unscale FP16 gradients" the moment the gradient scaler runs.
+    Master weights must be fp32; mixed precision is the Trainer's job.
+    """
+    import torch
+
+    model = auto_class.from_pretrained(model_name, dtype=torch.float32, **kwargs)
+    param_dtype = next(model.parameters()).dtype
+    if param_dtype != torch.float32:
+        raise RuntimeError(
+            f"{model_name} loaded as {param_dtype}, expected float32. "
+            f"Training under AMP requires fp32 master weights."
+        )
+    return model
 
 
 def load_jsonl(path: Path, limit: int | None = None) -> list[dict]:
