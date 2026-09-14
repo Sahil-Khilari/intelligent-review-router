@@ -187,28 +187,39 @@ def rating_to_label(rating):
     return "Positive"
 
 
-def resolve_amazon_configs():
-    """
-    Config names are discovered, never assumed. A missing category reports what
-    is available instead of failing on a KeyError deep in the stream.
-    """
-    from datasets import get_dataset_config_names
+REVIEW_PREFIX = "raw/review_categories/"
 
-    available = set(get_dataset_config_names(AMAZON_ID))
+
+def resolve_amazon_files():
+    """
+    Resolves category names to actual files in the repo.
+
+    The dataset ships a loading script and datasets 5.x dropped script support
+    ("Dataset scripts are no longer supported"), so the raw JSONL files are
+    streamed directly. Names are discovered from the repo listing, never
+    assumed: a missing category reports what is available.
+    """
+    from huggingface_hub import HfApi
+
+    files = HfApi().list_repo_files(AMAZON_ID, repo_type="dataset")
+    available = {
+        f[len(REVIEW_PREFIX):-len(".jsonl")]: f
+        for f in files
+        if f.startswith(REVIEW_PREFIX) and f.endswith(".jsonl")
+    }
+
     chosen, missing = [], []
     for category in AMAZON_CATEGORIES:
-        name = f"raw_review_{category}"
-        if name in available:
-            chosen.append(name)
+        if category in available:
+            chosen.append((category, f"hf://datasets/{AMAZON_ID}/{available[category]}"))
         else:
-            missing.append(name)
+            missing.append(category)
 
     if not chosen:
-        sample = sorted(n for n in available if n.startswith("raw_review_"))[:15]
         raise SystemExit(
-            f"None of the expected configs exist on {AMAZON_ID}.\n"
-            f"Looked for: {[f'raw_review_{c}' for c in AMAZON_CATEGORIES]}\n"
-            f"Available raw_review_* configs include: {sample}"
+            "None of the expected categories exist on " + AMAZON_ID + ". "
+            "Looked for: " + str(AMAZON_CATEGORIES) + ". "
+            "Available: " + str(sorted(available)[:20])
         )
     if missing:
         print(f"  note: unavailable, skipping: {missing}")
@@ -218,19 +229,19 @@ def resolve_amazon_configs():
 def build_amazon(total_rows, smoke):
     from datasets import load_dataset
 
-    configs = resolve_amazon_configs()
+    sources = resolve_amazon_files()
     per_class = max(1, total_rows // 3)
-    print(f"Streaming {AMAZON_ID} from {len(configs)} configs "
+    print(f"Streaming {AMAZON_ID} from {len(sources)} categories "
           f"(target {per_class} per class) ...")
 
     buckets = {label: [] for label in LABELS}
     seen_hashes = set()
 
-    for config in configs:
+    for config, url in sources:
         if all(len(buckets[l]) >= per_class for l in LABELS):
             break
         print(f"  {config} ...")
-        stream = load_dataset(AMAZON_ID, config, split="full", streaming=True)
+        stream = load_dataset("json", data_files=url, split="train", streaming=True)
 
         scanned = 0
         for record in stream:
@@ -291,7 +302,7 @@ def build_amazon(total_rows, smoke):
     return {
         "splits": splits,
         "stats": {
-            "configs": configs,
+            "categories": [c for c, _ in sources],
             "per_class_after_balance": smallest,
             "counts": {k: len(v) for k, v in splits.items()},
             "class_counts": {
