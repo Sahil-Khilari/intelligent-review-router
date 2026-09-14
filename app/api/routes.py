@@ -7,7 +7,7 @@ from datetime import datetime
 from app.db.database import get_db
 from app.db.models import ReviewAnalysis, SupportTicket
 from app.services.sentiment import SentimentAnalyzer
-from app.services.aspect_extraction import AspectExtractor
+from app.services.absa import build_extractor
 from app.services.routing import SupportRouter
 from app.services.ticket_service import TicketService
 
@@ -15,7 +15,7 @@ router = APIRouter(prefix="/api/v1", tags=["Review Router Engine"])
 
 # Initialize engine services singleton
 sentiment_analyzer = SentimentAnalyzer()
-aspect_extractor = AspectExtractor(sentiment_analyzer=sentiment_analyzer)
+aspect_extractor = build_extractor(sentiment_analyzer=sentiment_analyzer)
 support_router = SupportRouter()
 ticket_service = TicketService(sentiment_analyzer, aspect_extractor, support_router)
 

@@ -23,6 +23,33 @@ app.add_middleware(
 
 app.include_router(api_router)
 
+@app.get("/health", summary="Liveness and model readiness")
+def health():
+    """
+    Reports which models are actually answering, and on what device.
+
+    The service stays up on fallbacks when artifacts are missing, so "is it
+    running" and "is it running the models I think" are different questions.
+    This answers the second one.
+    """
+    from app.api.routes import aspect_extractor, sentiment_analyzer
+    from app.services.device import describe_device
+
+    sentiment = sentiment_analyzer.describe()
+    absa = (aspect_extractor.describe()
+            if hasattr(aspect_extractor, "describe")
+            else {"loaded": False, "artifacts_present": False,
+                  "note": "keyword lexicon fallback"})
+
+    degraded = sentiment["model_type"] != "transformer" or not absa.get("artifacts_present")
+    return {
+        "status": "ok",
+        "degraded": degraded,
+        "device": describe_device(),
+        "models": {"sentiment": sentiment, "absa": absa},
+    }
+
+
 @app.get("/", summary="Root Health Check")
 def root():
     return {

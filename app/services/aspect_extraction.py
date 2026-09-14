@@ -35,7 +35,8 @@ class AspectExtractor:
     def __init__(self, sentiment_analyzer=None):
         self.sentiment_analyzer = sentiment_analyzer
 
-    def extract_aspects(self, review_text: str) -> list[dict]:
+    def extract_aspects(self, review_text: str, overall_sentiment: str = None,
+                        overall_confidence: float = None) -> list[dict]:
         clauses = split_into_sentences(review_text)
         detected_issues = []
         seen_aspects = set()
@@ -82,14 +83,18 @@ class AspectExtractor:
                     "department": ASPECT_DICTIONARY[best_aspect]["department"]
                 })
 
-        # Fallback if no specific aspect detected: classify as product_quality or general
+        # Fallback if no specific aspect detected. Reports the sentiment
+        # model's own verdict when one is available, rather than asserting
+        # Neutral over a confident Negative.
         if not detected_issues:
             detected_issues.append({
                 "aspect": "product_quality",
                 "opinion": review_text,
-                "sentiment": "Neutral",
-                "confidence": 0.70,
-                "department": "Product Support"
+                "sentiment": overall_sentiment or "Neutral",
+                "confidence": round(float(overall_confidence), 2)
+                if overall_confidence is not None else 0.70,
+                "department": "Product Support",
+                "source": "fallback",
             })
 
         return detected_issues

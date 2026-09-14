@@ -13,8 +13,14 @@ class TicketService:
         overall_sentiment = sent_res["sentiment"]
         overall_confidence = sent_res["confidence"]
 
-        # Step 2: Aspect & Opinion Extraction
-        issues = self.aspect_extractor.extract_aspects(review_text)
+        # Step 2: Aspect & Opinion Extraction. The model's own verdict is
+        # passed down so the no-aspect fallback reports it instead of
+        # asserting Neutral over a confident Negative.
+        issues = self.aspect_extractor.extract_aspects(
+            review_text,
+            overall_sentiment=overall_sentiment,
+            overall_confidence=overall_confidence,
+        )
 
         # Step 3: Support Routing & Priority
         route_res = self.support_router.route_issues(overall_sentiment, issues)
