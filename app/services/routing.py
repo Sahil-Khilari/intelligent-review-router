@@ -9,19 +9,27 @@ ASPECT_DEPARTMENT_MAP = {
 
 CRITICAL_ASPECTS = {"payment", "refund_return"}
 
+PRIORITY_WEIGHTS = {"URGENT": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1}
+
+# A confident Negative verdict from the sentiment model is evidence in its own
+# right. When the lexicon finds no negative aspect but the model is sure the
+# review is negative, the review is still a complaint.
+OVERRIDE_CONFIDENCE = 0.80
+
+
 class SupportRouter:
-    def route_issues(self, overall_sentiment: str, issues: list[dict]) -> dict:
+    def route_issues(self, overall_sentiment: str, issues: list[dict],
+                     overall_confidence: float = None) -> dict:
         routing_list = []
-        negative_aspects = []
-        
+        negative_aspects = set()
+
         for issue in issues:
             aspect = issue.get("aspect", "product_quality")
             sent = issue.get("sentiment", "Neutral")
             dept = issue.get("department") or ASPECT_DEPARTMENT_MAP.get(aspect, "Customer Support")
-            
+
             if sent == "Negative":
-                negative_aspects.append(aspect)
-                # Compute aspect-specific priority
+                negative_aspects.add(aspect)
                 if aspect in CRITICAL_ASPECTS:
                     priority = "HIGH"
                 else:
@@ -33,36 +41,55 @@ class SupportRouter:
             else:
                 priority = "LOW"
                 reason = f"Positive feedback on {aspect}"
-                
+
             routing_list.append({
                 "department": dept,
                 "aspect": aspect,
                 "priority": priority,
                 "reason": reason
             })
-            
-        # Calculate overall system priority
+
         neg_count = len(negative_aspects)
-        has_critical = any(a in CRITICAL_ASPECTS for a in negative_aspects)
-        
+        has_critical = bool(negative_aspects & CRITICAL_ASPECTS)
+
+        # The sentiment model used to be computed, passed in, and ignored.
+        # A confident Negative verdict now lifts a review the lexicon read as
+        # harmless to at least MEDIUM, which is where under-escalation lived.
+        model_says_negative = (
+            overall_sentiment == "Negative"
+            and (overall_confidence is None or overall_confidence >= OVERRIDE_CONFIDENCE)
+        )
+
         if has_critical and neg_count >= 2:
             overall_priority = "URGENT"
         elif has_critical or neg_count >= 2:
             overall_priority = "HIGH"
         elif neg_count == 1:
             overall_priority = "MEDIUM"
+        elif model_says_negative:
+            overall_priority = "MEDIUM"
         else:
             overall_priority = "LOW"
-            
-        # Select primary department
-        if routing_list:
-            # Prefer department with highest priority issue
-            priority_weights = {"URGENT": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1}
-            sorted_routing = sorted(routing_list, key=lambda x: priority_weights.get(x["priority"], 0), reverse=True)
-            primary_department = sorted_routing[0]["department"]
+
+        # Route on complaints. Praise stays in the payload as insight data but
+        # must not decide which team owns the ticket, and must not become the
+        # primary department of an otherwise negative review.
+        actionable = [r for r in routing_list if r["priority"] != "LOW"]
+        candidates = actionable or routing_list
+
+        if candidates:
+            ranked = sorted(
+                candidates,
+                key=lambda x: (
+                    PRIORITY_WEIGHTS.get(x["priority"], 0),
+                    x["aspect"] in CRITICAL_ASPECTS,
+                ),
+                reverse=True,
+            )
+            primary_department = ranked[0]["department"]
         else:
             primary_department = "Customer Support"
-            
+
         return {
             "primary_department": primary_department,
             "overall_priority": overall_priority,

@@ -14,10 +14,16 @@ class TicketService:
         overall_confidence = sent_res["confidence"]
 
         # Step 2: Aspect & Opinion Extraction
-        issues = self.aspect_extractor.extract_aspects(review_text)
+        issues = self.aspect_extractor.extract_aspects(
+            review_text,
+            overall_sentiment=overall_sentiment,
+            overall_confidence=overall_confidence,
+        )
 
         # Step 3: Support Routing & Priority
-        route_res = self.support_router.route_issues(overall_sentiment, issues)
+        route_res = self.support_router.route_issues(
+            overall_sentiment, issues, overall_confidence=overall_confidence
+        )
 
         ticket_id = f"TICK-{uuid.uuid4().hex[:8].upper()}"
 
