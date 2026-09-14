@@ -12,6 +12,8 @@ ENV/
 
 # Database files
 *.db
+*.db-wal
+*.db-shm
 *.sqlite
 *.sqlite3
 ecommerce_router.db
@@ -47,5 +49,5 @@ tmp/
 .DS_Store
 Thumbs.db
 
-raw/
-processed/
+/data/raw/
+/data/processed/
