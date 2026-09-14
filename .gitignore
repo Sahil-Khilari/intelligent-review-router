@@ -59,3 +59,4 @@ _export_fallback/
 *.db-wal
 *.db-shm
 /checkpoints/
+/eval/metrics.json
