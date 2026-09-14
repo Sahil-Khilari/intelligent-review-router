@@ -1,7 +1,7 @@
 [project]
 name = "ecommerce-review-router"
 version = "0.1.0"
-description = "Add your description here"
+description = "Aspect-based review analyzer that routes e-commerce complaints to support departments"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
@@ -12,12 +12,40 @@ dependencies = [
     "matplotlib>=3.11.2",
     "numpy>=2.5.3",
     "pandas>=3.0.5",
-    "pyspark>=4.2.0",
     "scikit-learn>=1.9.1",
     "seaborn>=0.13.2",
+    "sentence-transformers>=3.0.0",
+    "seqeval>=1.2.2",
     "sqlalchemy>=2.0.52",
     "streamlit>=1.63.0",
     "torch>=2.14.0",
-    "torchvision>=0.29.0",
     "transformers>=5.17.0",
+    "uvicorn>=0.52.4",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.2",
+    "httpx>=0.28.1",
+]
+
+# Models run on GPU (see app/services/device.py). torch must come from the CUDA
+# wheel index; the default index resolves to a +cpu build on Windows, which is
+# what left the local GPU unused. cu130 matches the pinned torch 2.14.0 and the
+# CUDA 13.0 driver.
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu130" }]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# ALLOW_CPU is set in tests/conftest.py rather than here, which would need the
+# pytest-env plugin. It is the only place CPU execution is permitted.
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::UserWarning",
 ]

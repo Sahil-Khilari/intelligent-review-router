@@ -4,6 +4,7 @@ import json
 import torch
 import numpy as np
 
+from app.services.device import resolve_device
 from app.services.preprocessing import clean_text
 
 class SentimentAnalyzer:
@@ -14,21 +15,39 @@ class SentimentAnalyzer:
         self.tokenizer = None
         self.hf_model = None
         self.label_map = {0: "Negative", 1: "Neutral", 2: "Positive"}
+        self.model_path = None
+        self.weights_missing = False
+        self.device = None
         
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         
         transformer_path = model_dir or os.path.join(base_dir, "models", "trained_model", "sentiment")
         baseline_path = os.path.join(base_dir, "models", "trained_model", "baseline")
         
-        # Try loading Hugging Face transformer first
-        if os.path.exists(os.path.join(transformer_path, "config.json")):
+        # Presence is decided by the weights file, not config.json. Gating on the
+        # metadata meant an untrained checkout entered the transformer branch,
+        # raised inside from_pretrained, and degraded to TF-IDF in silence.
+        self.weights_missing = (
+            os.path.exists(os.path.join(transformer_path, "config.json"))
+            and not self._has_weights(transformer_path)
+        )
+        if self.weights_missing:
+            print(
+                f"[SentimentAnalyzer] No trained weights in {transformer_path} - "
+                "serving the TF-IDF baseline. Run: python train_all.py"
+            )
+
+        if self._has_weights(transformer_path):
             try:
                 from transformers import AutoTokenizer, AutoModelForSequenceClassification
+                self.device = resolve_device("Sentiment inference")
                 self.tokenizer = AutoTokenizer.from_pretrained(transformer_path)
                 self.hf_model = AutoModelForSequenceClassification.from_pretrained(transformer_path)
+                self.hf_model.to(self.device)
                 self.hf_model.eval()
                 self.model_type = "transformer"
-                print(f"[SentimentAnalyzer] Loaded fine-tuned Transformer model from {transformer_path}")
+                self.model_path = transformer_path
+                print(f"[SentimentAnalyzer] Loaded Transformer from {transformer_path} on {self.device}")
                 return
             except Exception as e:
                 print(f"[SentimentAnalyzer] Failed to load Transformer: {e}. Falling back to baseline.")
@@ -48,6 +67,23 @@ class SentimentAnalyzer:
                 self._build_inmemory_fallback()
         else:
             self._build_inmemory_fallback()
+
+    @staticmethod
+    def _has_weights(path: str) -> bool:
+        return any(
+            os.path.exists(os.path.join(path, name))
+            for name in ("model.safetensors", "pytorch_model.bin", "tf_model.h5")
+        )
+
+    def describe(self) -> dict:
+        """Which model is answering, and on what device. Surfaced by /health."""
+        return {
+            "model_type": self.model_type,
+            "transformer_loaded": self.hf_model is not None,
+            "weights_missing": self.weights_missing,
+            "model_path": self.model_path,
+            "device": str(self.device) if self.device is not None else None,
+        }
 
     def _build_inmemory_fallback(self):
         from sklearn.feature_extraction.text import TfidfVectorizer
@@ -73,21 +109,25 @@ class SentimentAnalyzer:
             return {"sentiment": "Neutral", "confidence": 0.50, "model_type": self.model_type}
             
         if self.model_type == "transformer" and self.hf_model is not None:
-            inputs = self.tokenizer(cleaned, return_tensors="pt", truncation=True, max_length=128)
+            inputs = self.tokenizer(cleaned, return_tensors="pt", truncation=True, max_length=256)
+            inputs = {k: v.to(self.device) for k, v in inputs.items()}
             with torch.no_grad():
                 outputs = self.hf_model(**inputs)
-                probs = torch.softmax(outputs.logits, dim=-1).squeeze().numpy()
+                probs = torch.softmax(outputs.logits, dim=-1).squeeze().cpu().numpy()
                 pred_id = int(np.argmax(probs))
                 conf = float(probs[pred_id])
                 
-            sentiment = self.hf_model.config.id2label.get(pred_id, self.label_map.get(pred_id, "Neutral"))
+            id2label = self.hf_model.config.id2label
+            sentiment = id2label.get(pred_id, self.label_map.get(pred_id, "Neutral"))
+            # Label names come from the model config rather than a hardcoded
+            # 0/1/2 ordering, so `sentiment` and `probabilities` cannot disagree
+            # if a model is trained with a different label order.
             return {
                 "sentiment": sentiment,
                 "confidence": round(conf, 4),
                 "probabilities": {
-                    "Negative": round(float(probs[0]), 4) if len(probs) > 0 else 0.0,
-                    "Neutral": round(float(probs[1]), 4) if len(probs) > 1 else 0.0,
-                    "Positive": round(float(probs[2]), 4) if len(probs) > 2 else 0.0
+                    id2label.get(i, self.label_map.get(i, str(i))): round(float(p), 4)
+                    for i, p in enumerate(probs)
                 },
                 "model_type": "transformer"
             }
