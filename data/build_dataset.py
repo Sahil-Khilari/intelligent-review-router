@@ -74,6 +74,27 @@ MULTI_ASPECT_TEMPLATES = [
     "{pos_opinion}, however {neg_opinion}."
 ]
 
+def compose_review(product, op_texts):
+    """
+    Joins every selected opinion into one review.
+
+    Polarity changes are joined with a contrastive conjunction and matching
+    polarities with "and", so the text reads naturally while guaranteeing that
+    each labelled aspect is actually present.
+    """
+    parts = []
+    previous = None
+    for _, sentiment, opinion in op_texts:
+        if previous is None:
+            parts.append(opinion)
+        elif sentiment != previous:
+            parts.append(f"but {opinion}")
+        else:
+            parts.append(f"and {opinion}")
+        previous = sentiment
+    return f"The {product}: " + ", ".join(parts) + "."
+
+
 def determine_priority(aspects_with_sentiments):
     has_urgent = any(a in ["payment", "refund_return"] and s == "Negative" for a, s in aspects_with_sentiments)
     neg_count = sum(1 for _, s in aspects_with_sentiments if s == "Negative")
@@ -137,22 +158,13 @@ def generate_reviews_dataset(num_samples=1500, random_state=42):
                     "confidence": round(random.uniform(0.82, 0.98), 2)
                 })
             
-            # Build text
-            pos_ops = [op for a, s, op in op_texts if s == "Positive"]
-            neg_ops = [op for a, s, op in op_texts if s == "Negative"]
-            neu_ops = [op for a, s, op in op_texts if s == "Neutral"]
-            
-            if pos_ops and neg_ops:
-                if len(neg_ops) >= 2:
-                    review_text = f"The {product} is {pos_ops[0]}, but {neg_ops[0]} and {neg_ops[1]}."
-                else:
-                    review_text = f"The {product} is {pos_ops[0]}, but {neg_ops[0]}."
-            elif neg_ops:
-                review_text = f"I am unhappy with the {product}. {neg_ops[0]} and {neg_ops[1] if len(neg_ops) > 1 else 'it was disappointing'}."
-            elif pos_ops:
-                review_text = f"Excellent {product}! {pos_ops[0]} and {pos_ops[1] if len(pos_ops) > 1 else 'works great'}."
-            else:
-                review_text = f"Bought the {product}. {op_texts[0][2]}."
+            # Build text. Every selected opinion has to appear: the previous
+            # version emitted at most one positive and two negatives, so any
+            # Neutral opinion - and any second positive - was dropped from the
+            # review while its aspect stayed in the `aspects` label. That
+            # trained the model to predict aspects with no supporting text and
+            # capped achievable aspect recall.
+            review_text = compose_review(product, op_texts)
                 
             neg_count = sum(1 for _, s in selected_aspects if s == "Negative")
             pos_count = sum(1 for _, s in selected_aspects if s == "Positive")
