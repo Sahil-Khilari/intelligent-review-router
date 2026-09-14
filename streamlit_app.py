@@ -1,5 +1,6 @@
 import os
 import json
+import html
 import pandas as pd
 import streamlit as st
 from datetime import datetime
@@ -173,8 +174,16 @@ if nav_choice == "🔍 Live Review Analyzer":
             st.warning("Please enter a valid review text.")
         else:
             with st.spinner("Processing NLP models & routing logic..."):
-                res = ticket_service.analyze_and_route(review_input, cust_id, prod_id)
-                
+                st.session_state["analysis"] = ticket_service.analyze_and_route(
+                    review_input, cust_id, prod_id
+                )
+                st.session_state.pop("ticket_saved", None)
+
+    # Rendered outside the button block: st.button is only True on the run
+    # immediately after its own click, so anything nested inside another
+    # button's block disappears the moment it is pressed.
+    if st.session_state.get("analysis"):
+            res = st.session_state["analysis"]
             st.markdown("---")
             st.subheader("📋 Analysis & Routing Summary")
             
@@ -206,7 +215,7 @@ if nav_choice == "🔍 Live Review Analyzer":
                     <strong>Aspect:</strong> <code>{issue['aspect'].upper()}</code> &nbsp;|&nbsp;
                     <strong>Department:</strong> {issue['department']} &nbsp;|&nbsp;
                     <strong>Sentiment:</strong> <b>{issue['sentiment']}</b> ({issue['confidence']*100:.0f}% conf)<br>
-                    <em>"{issue['opinion']}"</em>
+                    <em>"{html.escape(str(issue['opinion']))}"</em>
                 </div>
                 """, unsafe_allow_html=True)
                 
@@ -216,7 +225,12 @@ if nav_choice == "🔍 Live Review Analyzer":
             
             # Create Ticket Option
             st.markdown("---")
-            if st.button("➕ Create Support Ticket in Database"):
+            if st.session_state.get("ticket_saved"):
+                st.success(
+                    f"Support Ticket `{st.session_state['ticket_saved']}` dispatched to "
+                    f"{res['primary_department']}!"
+                )
+            elif st.button("➕ Create Support Ticket in Database"):
                 db = SessionLocal()
                 try:
                     from app.db.models import SupportTicket
@@ -233,9 +247,10 @@ if nav_choice == "🔍 Live Review Analyzer":
                     )
                     db.add(ticket)
                     db.commit()
-                    st.success(f"Support Ticket `{res['ticket_id']}` successfully dispatched to {res['primary_department']}!")
+                    st.session_state["ticket_saved"] = res["ticket_id"]
                 finally:
                     db.close()
+                st.rerun()
                     
             with st.expander("🛠️ Raw JSON Response Payload"):
                 st.json(res)
@@ -257,15 +272,23 @@ elif nav_choice == "📁 Batch Review Inspector":
         else:
             batch_df = pd.DataFrame()
             
+    if not batch_df.empty and 'review' not in batch_df.columns:
+        st.error(
+            "This CSV has no `review` column. Found: "
+            + ", ".join(f"`{c}`" for c in batch_df.columns)
+        )
+        batch_df = pd.DataFrame()
+
     if not batch_df.empty:
         st.write(f"Loaded **{len(batch_df)}** reviews for batch processing.")
-        st.dataframe(batch_df[['review_id', 'review', 'sentiment', 'priority']].head(10) if 'review_id' in batch_df.columns else batch_df.head(10), width='stretch')
+        preview_cols = [c for c in ['review_id', 'review', 'sentiment', 'priority'] if c in batch_df.columns]
+        st.dataframe(batch_df[preview_cols].head(10), width='stretch')
         
         if st.button("⚡ Run Batch Analysis"):
             results = []
             progress_bar = st.progress(0)
             
-            for idx, row in batch_df.iterrows():
+            for position, (_, row) in enumerate(batch_df.iterrows(), start=1):
                 rev = str(row['review'])
                 res = ticket_service.analyze_and_route(rev)
                 results.append({
@@ -276,7 +299,7 @@ elif nav_choice == "📁 Batch Review Inspector":
                     "overall_priority": res["overall_priority"],
                     "detected_aspects": ", ".join([i['aspect'] for i in res['issues']])
                 })
-                progress_bar.progress((idx + 1) / len(batch_df))
+                progress_bar.progress(position / len(batch_df))
                 
             res_df = pd.DataFrame(results)
             st.success("Batch analysis complete!")
@@ -376,22 +399,44 @@ elif nav_choice == "📊 Analytics & Insights":
         st.markdown("---")
         
         # Load processed CSV for visualizations
-        sample_path = "data/processed/ecommerce_reviews.csv"
-        if os.path.exists(sample_path):
-            df_analytics = pd.read_csv(sample_path)
-            
+        st.subheader("Live routing decisions")
+        st.caption("Aggregated from reviews this system has actually analysed.")
+
+        live = pd.DataFrame(
+            db.query(ReviewAnalysis.overall_sentiment, ReviewAnalysis.primary_department,
+                     ReviewAnalysis.overall_priority).all(),
+            columns=["sentiment", "department", "priority"],
+        )
+
+        if live.empty:
+            st.info("No reviews analysed yet. Use the Live Review Analyzer to populate this.")
+        else:
             c1, c2 = st.columns(2)
             with c1:
-                st.subheader("Overall Sentiment Breakdown")
-                st.bar_chart(df_analytics['sentiment'].value_counts())
+                st.markdown("**Sentiment breakdown**")
+                st.bar_chart(live['sentiment'].value_counts())
             with c2:
-                st.subheader("Department Workload Share")
-                st.bar_chart(df_analytics['department'].value_counts())
-                
-            st.subheader("Priority Distribution by Department")
-            ct = pd.crosstab(df_analytics['department'], df_analytics['priority'])
-            st.dataframe(ct, width='stretch')
-        else:
-            st.info("Dataset analytics file not found.")
+                st.markdown("**Department workload**")
+                st.bar_chart(live['department'].value_counts())
+
+            st.markdown("**Priority distribution by department**")
+            st.dataframe(pd.crosstab(live['department'], live['priority']), width='stretch')
+
+        # The training corpus is shown separately and labelled as such. It used
+        # to be rendered under the same heading as the live metrics, so the
+        # dashboard presented generated data as system output.
+        sample_path = "data/processed/ecommerce_reviews.csv"
+        if os.path.exists(sample_path):
+            with st.expander("Reference: synthetic training corpus (not live data)"):
+                df_analytics = pd.read_csv(sample_path)
+                st.caption(
+                    f"{len(df_analytics)} generated reviews used to train the model. "
+                    "Shown for comparison only."
+                )
+                st.bar_chart(df_analytics['sentiment'].value_counts())
+                st.dataframe(
+                    pd.crosstab(df_analytics['department'], df_analytics['priority']),
+                    width='stretch',
+                )
     finally:
         db.close()
