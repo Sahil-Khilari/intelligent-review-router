@@ -1,6 +1,11 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Column, Integer, String, Float, Text, DateTime, JSON
 from app.db.database import Base
+
+
+def utcnow() -> datetime:
+    """Timezone-aware UTC. datetime.utcnow() is deprecated from Python 3.12."""
+    return datetime.now(timezone.utc)
 
 class ReviewAnalysis(Base):
     __tablename__ = "review_analyses"
@@ -17,7 +22,7 @@ class ReviewAnalysis(Base):
     primary_department = Column(String(50), index=True)
     overall_priority = Column(String(20), index=True)
     routing = Column(JSON)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow, index=True)
 
 class SupportTicket(Base):
     __tablename__ = "support_tickets"
@@ -31,5 +36,5 @@ class SupportTicket(Base):
     status = Column(String(20), default="OPEN", index=True)  # OPEN, IN_PROGRESS, RESOLVED, CLOSED
     review_text = Column(Text)
     summary = Column(Text)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow, index=True)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

@@ -1,7 +1,7 @@
 [project]
 name = "ecommerce-review-router"
 version = "0.1.0"
-description = "Add your description here"
+description = "NLP review analyzer that routes e-commerce complaints to support departments with aspect-level sentiment and priority scoring"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
@@ -20,4 +20,20 @@ dependencies = [
     "torch>=2.14.0",
     "torchvision>=0.29.0",
     "transformers>=5.17.0",
+]
+
+# `uv run pytest tests/` used to fail on a clean checkout: pytest was never a
+# declared dependency, so it only worked where one happened to be installed
+# globally. httpx is required by fastapi.testclient.
+[dependency-groups]
+dev = [
+    "pytest>=8.4.2",
+    "httpx>=0.28.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::UserWarning",
 ]
