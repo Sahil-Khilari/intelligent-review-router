@@ -8,8 +8,19 @@ services:
       - "8000:8000"
     volumes:
       - ./data:/app/data
+      # Trained models (train_all.py / scripts/download_models.py write here).
+      - ./models:/app/models
       - ./app/models/trained_model:/app/app/models/trained_model
       - sqlite_data:/app/app/db
+    # Models run on GPU (app/services/device.py refuses silent CPU execution).
+    # Requires the NVIDIA Container Toolkit on the host.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     restart: unless-stopped
 
   frontend:
@@ -21,6 +32,18 @@ services:
       - "8501:8501"
     environment:
       - API_URL=http://backend:8000
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+    # Models run on GPU (app/services/device.py refuses silent CPU execution).
+    # Requires the NVIDIA Container Toolkit on the host.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     depends_on:
       - backend
     restart: unless-stopped

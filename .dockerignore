@@ -12,3 +12,10 @@ distilbert_checkpoints/
 scratch/
 tmp/
 .env
+
+# Training outputs. models/ is mounted at runtime (see docker-compose.yml);
+# checkpoints/ can reach ~12 GB after a full run and must never enter the image.
+checkpoints/
+models/
+_export_fallback/
+data/real/
