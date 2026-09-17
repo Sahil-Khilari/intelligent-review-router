@@ -45,18 +45,23 @@ with an actionable message if it is missing — there is no silent CPU execution
 The only exception is `pytest`, which sets `ALLOW_CPU=1` so CI can run on
 GPU-less runners.
 
-Install torch from the CUDA index (already configured in `pyproject.toml`):
+Install everything, including the CUDA build of torch (the index is already
+configured in `pyproject.toml`), then confirm the GPU is visible:
 
 ```powershell
 uv sync --group dev
-python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+uv run python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+# expect: 2.14.0+cu130 True
 ```
+
+Run every script with **`uv run python ...`**. A bare `python` usually resolves
+to the system interpreter, which has none of the project's dependencies.
 
 ---
 
 ## 📌 Business Routing & Priority Matrix
 
-| Business Aspect | Primary Target Department | Example Keywords | Default Priority |
+| Business Aspect | Primary Target Department | Fallback Keywords | Default Priority |
 | :--- | :--- | :--- | :--- |
 | `delivery` | **Logistics** | delivery, shipping, courier, delayed, late, tracking | `MEDIUM` |
 | `product_quality` | **Product Support** | quality, broken, screen, defective, material, build | `MEDIUM` |
@@ -65,48 +70,60 @@ python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
 | `packaging` | **Returns / Replacement** | packaging, box, envelope, bubble wrap, torn | `LOW` |
 | `customer_support` | **Customer Support** | support, representative, agent, email, response | `MEDIUM` |
 
-*Note: Reviews with multiple negative critical issues (e.g. Payment failed + Refund pending) are automatically escalated to **`URGENT`**.*
+*Reviews with multiple negative critical issues (e.g. payment failed + refund pending) escalate to **`URGENT`**.
+Departments are assigned by the embedding-based mapper (`app/services/aspect_mapping.py`); the keywords above are
+used only by the fallback lexicon when the trained models are absent.*
 
 ---
 
 ## 📂 Repository Structure
 
 ```
-ecommerce-review-router/
+intelligent-review-router/
+│
+├── main.py                          # FastAPI app, CORS, / and /health
+├── streamlit_app.py                 # Dashboard: analyzer, batch, ticket desk, analytics
 │
 ├── app/
-│   ├── main.py                     # FastAPI Application lifecycle & CORS setup
-│   ├── api/
-│   │   └── routes.py               # REST API Endpoints (/analyze, /tickets, /analytics)
+│   ├── api/routes.py                # /analyze, /tickets, /analytics
+│   ├── db/                          # SQLAlchemy engine and ORM models
 │   ├── services/
-│   │   ├── preprocessing.py        # Text cleaning & sentence clause segmentation
-│   │   ├── sentiment.py            # SentimentAnalyzer (Transformer + Baseline fallback)
-│   │   ├── aspect_extraction.py    # AspectExtractor (ATE & APC engine)
-│   │   ├── routing.py              # SupportRouter business logic engine
-│   │   └── ticket_service.py       # Ticket generator service
-│   ├── models/
-│   │   └── trained_model/          # Exported trained weights & tokenizer
-│   └── db/
-│       ├── database.py             # SQLAlchemy engine & session setup
-│       └── models.py               # Database ORM schema (ReviewAnalysis, SupportTicket)
+│   │   ├── absa.py                  # Trained ABSA pipeline (ATE -> APC -> mapper)
+│   │   ├── aspect_mapping.py        # Aspect term -> department (embedding similarity)
+│   │   ├── bio_alignment.py         # Aspect span recovery and BIO tagging
+│   │   ├── sentiment.py             # Review sentiment (transformer, TF-IDF fallback)
+│   │   ├── aspect_extraction.py     # Keyword lexicon (fallback only)
+│   │   ├── routing.py               # Department and priority rules
+│   │   ├── ticket_service.py        # Runs the pipeline for one review
+│   │   ├── artifacts.py             # Where trained models live
+│   │   └── device.py                # GPU requirement and the pytest CPU escape
+│   └── models/trained_model/
+│       ├── baseline/                # TF-IDF fallback (committed)
+│       └── sentiment/               # Legacy DistilBERT metadata (weights not committed)
 │
 ├── data/
-│   ├── build_dataset.py            # Dataset generator script
-│   ├── raw/                        # Raw CSV reviews
-│   └── processed/                  # Processed 1,500 e-commerce review dataset
+│   ├── fetch_real_datasets.py       # Builds data/real/ from SemEval-2014 + Amazon Reviews
+│   └── build_dataset.py             # Legacy synthetic generator (not used for training)
 │
+├── train_all.py                     # One command: trains, evaluates and publishes all 3 models
+├── train_ate.py                     # Aspect term extraction
+├── train_apc.py                     # Aspect polarity
+├── train_sentiment.py               # Review sentiment
+├── train_common.py                  # Shared config, GPU profiles, checkpoint/resume
+│
+├── eval/evaluate_real.py            # Per-stage evaluation on real held-out data
+├── scripts/download_models.py       # Fetch trained models from the Hugging Face Hub
 ├── notebooks/
-│   ├── 01_eda.ipynb                # Exploratory Data Analysis & visual plots
-│   ├── 02_sentiment_baseline.ipynb # TF-IDF + Logistic Regression Baseline
-│   ├── 03_transformer_sentiment.ipynb # DistilBERT Transformer fine-tuning
-│   └── 04_aspect_extraction.ipynb  # Aspect Term & Polarity Classification
+│   ├── train_on_colab.ipynb         # Colab (T4) wrapper around train_all.py
+│   └── 01-04_*.ipynb                # Earlier synthetic-data experiments (historical)
 │
-├── tests/                          # Automated Pytest suite (11 unit & integration tests)
-├── train_transformer.py            # Fine-tuning CLI script for DistilBERT
-├── streamlit_app.py                # Interactive Streamlit Web UI Dashboard
-├── pyproject.toml                  # Project metadata & dependencies
-└── README.md
+├── tests/                           # 97 pytest tests (API, pipeline, training config, dashboard)
+├── ci/                              # GitHub Actions workflow (see ci/README.md to enable)
+└── Dockerfile, Dockerfile.streamlit, docker-compose.yml
 ```
+
+Generated at runtime and git-ignored: `data/real/` (corpus), `models/` (trained
+models; smoke runs go to `models/_smoke/`), `checkpoints/`.
 
 ---
 
@@ -118,7 +135,7 @@ Training happens once on a GPU machine; everything else downloads.
 
 ```powershell
 # Already trained and published:
-python scripts/download_models.py --user <your-hf-username>
+uv run python scripts/download_models.py --user <your-hf-username>
 
 # Or train them (see Training below)
 ```
@@ -150,28 +167,46 @@ uv run pytest tests/
 ## 🎓 Training
 
 Run the smoke profile first. It takes about two minutes and proves the whole
-pipeline executes before any real GPU time is spent.
+pipeline executes before real GPU time is spent. Smoke models are written to
+`models/_smoke/` and are **never served**, so this step cannot replace a real
+model.
 
 ```powershell
-python data/fetch_real_datasets.py --profile smoke
-python train_all.py --profile smoke
+uv run python data/fetch_real_datasets.py --profile smoke
+uv run python train_all.py --profile smoke
 ```
 
 Then the real run — one command, three models, published to the Hub:
 
 ```powershell
-python data/fetch_real_datasets.py --profile 4090
-python train_all.py --profile 4090 --push-to-user <your-hf-username>
+uv run hf auth login           # once; paste a token with write access
+uv run python data/fetch_real_datasets.py --profile 4090
+uv run python train_all.py --profile 4090 --push-to-user <your-hf-username>
 ```
 
-Profiles: `4090`, `t4`, `3050`, `smoke`. For Colab (T4), open
-[`notebooks/train_on_colab.ipynb`](notebooks/train_on_colab.ipynb) — it calls
-the same code, so results match.
+| Profile | Hardware | Approximate time |
+| :--- | :--- | :--- |
+| `smoke` | any CUDA GPU | ~2 min |
+| `4090` | RTX 4090, 24 GB | ~1.5–2 h (building the corpus adds ~6–10 min) |
+| `t4` | Colab T4, 16 GB | ~3 h |
+| `3050` | 6 GB laptop GPU | development only |
 
-Evaluate on real held-out data:
+Almost all of that time is review sentiment: 5 epochs over ~320k reviews on the
+`4090` profile. Peak memory measured at about 12 GB of 24.
+
+**If a run is interrupted, run the same command again** — it resumes from the
+last checkpoint. Checkpoints are tied to the exact configuration, so a smoke run
+can never be resumed into a real one. Use `--no-resume` to start over. On Colab,
+set `CHECKPOINT_DIR` to a Google Drive folder so a disconnect doesn't lose them.
+
+For Colab, open [`notebooks/train_on_colab.ipynb`](notebooks/train_on_colab.ipynb);
+it calls the same code, so results match.
+
+After training, `/health` should report `degraded: false`, and the dashboard
+sidebar lists the models in use. Evaluate on real held-out data:
 
 ```powershell
-python eval/evaluate_real.py
+uv run python eval/evaluate_real.py
 ```
 
 ---
@@ -193,19 +228,20 @@ train/test overlap as a hard failure rather than reporting it after the fact.
 
 ## 🐳 Docker Deployment
 
-Run both the FastAPI Backend & Streamlit Frontend together using Docker Compose:
+Runs the API and dashboard together. Because models run on GPU, the host needs
+an NVIDIA GPU and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
+(Docker Desktop on Windows provides GPU support through WSL 2).
+
+Train or download the models on the host first — `./models` is mounted into
+both containers and is not baked into the images:
 
 ```powershell
-# Build and launch all services in detached mode
-docker-compose up --build -d
+uv run python scripts/download_models.py --user <your-hf-username>
 
-# View container logs
-docker-compose logs -f
-
-# Stop container services
-docker-compose down
+docker-compose up --build -d    # build and start
+docker-compose logs -f          # follow logs
+docker-compose down             # stop
 ```
 
-- **FastAPI Backend**: `http://localhost:8000/docs`
+- **FastAPI Backend**: `http://localhost:8000/docs` (check `/health`)
 - **Streamlit Web UI**: `http://localhost:8501`
-

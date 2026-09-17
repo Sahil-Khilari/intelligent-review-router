@@ -6,7 +6,8 @@ after cloning, or any time models/ is empty:
 
     uv run python scripts/download_models.py --user <your-hf-username>
 
-Private repos need a token: `huggingface-cli login`, or set HF_TOKEN.
+Private repos need a token: `uv run hf auth login`, or set HF_TOKEN.
+(`huggingface-cli` is deprecated in huggingface_hub 1.x and no longer works.)
 """
 
 import argparse
