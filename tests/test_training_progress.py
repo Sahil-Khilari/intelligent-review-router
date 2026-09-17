@@ -103,6 +103,16 @@ def test_callback_flags_a_slowdown(logs, monkeypatch):
     assert "SLOWDOWN" in (logs / "training_progress.log").read_text(encoding="utf-8")
 
 
+def test_logged_loss_is_divided_by_gradient_accumulation(logs):
+    """transformers 5.17 reports the loss multiplied by the accumulation steps."""
+    cb = progress.ProgressCallback("apc", every_seconds=0)
+    cb.on_train_begin(None, trainer_state(0), None)
+    cb.on_log(SimpleNamespace(gradient_accumulation_steps=4), trainer_state(50), None,
+              logs={"loss": 4.108})
+    cb.on_evaluate(None, trainer_state(100, epoch=1.0), None, metrics={})
+    assert state(logs)["current"]["last_loss"] == 1.027
+
+
 def test_callback_records_loss_and_evaluation(logs):
     cb = progress.ProgressCallback("apc", every_seconds=0)
     cb.on_train_begin(None, trainer_state(0), None)

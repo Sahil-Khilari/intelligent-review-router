@@ -213,7 +213,13 @@ class ProgressCallback(TrainerCallback):
 
     def on_log(self, args, state, control, logs=None, **kwargs):
         if logs and "loss" in logs:
-            self._loss = round(float(logs["loss"]), 4)
+            # transformers 5.17 logs the training loss multiplied by the
+            # gradient accumulation steps. Measured on all three tasks with
+            # accumulation 4: the logged value divided by 4 tracks the
+            # validation loss, and starts at ln(3) for the 3-class models.
+            # Report the per-example loss so it can be read against validation.
+            accum = max(1, int(getattr(args, "gradient_accumulation_steps", 1) or 1))
+            self._loss = round(float(logs["loss"]) / accum, 4)
 
     def on_evaluate(self, args, state, control, metrics=None, **kwargs):
         if metrics:
