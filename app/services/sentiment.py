@@ -4,6 +4,7 @@ import json
 import torch
 import numpy as np
 
+from app.services.artifacts import BASELINE_DIR, has_weights, resolve_sentiment_dir
 from app.services.device import resolve_device
 from app.services.preprocessing import clean_text
 
@@ -19,25 +20,36 @@ class SentimentAnalyzer:
         self.weights_missing = False
         self.device = None
         
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        
-        transformer_path = model_dir or os.path.join(base_dir, "models", "trained_model", "sentiment")
-        baseline_path = os.path.join(base_dir, "models", "trained_model", "baseline")
-        
-        # Presence is decided by the weights file, not config.json. Gating on the
-        # metadata meant an untrained checkout entered the transformer branch,
-        # raised inside from_pretrained, and degraded to TF-IDF in silence.
-        self.weights_missing = (
-            os.path.exists(os.path.join(transformer_path, "config.json"))
-            and not self._has_weights(transformer_path)
-        )
+        baseline_path = str(BASELINE_DIR)
+
+        # An explicit model_dir is used as given. Otherwise the model trained by
+        # train_sentiment.py (models/sentiment) is preferred over the legacy
+        # DistilBERT export. Looking only at the legacy folder meant a freshly
+        # trained model was never served, and the service told the user to
+        # train again.
+        if model_dir:
+            transformer_path = str(model_dir)
+            searched = [transformer_path]
+            if not has_weights(transformer_path):
+                transformer_path = None
+        else:
+            found, searched = resolve_sentiment_dir()
+            transformer_path = str(found) if found else None
+
+        # Decided by the weights file, not config.json: the metadata is
+        # committed while weights are not, so gating on it made an untrained
+        # checkout raise inside from_pretrained and degrade in silence.
+        self.weights_missing = transformer_path is None
         if self.weights_missing:
+            looked_in = ", ".join(str(p) for p in searched)
             print(
-                f"[SentimentAnalyzer] No trained weights in {transformer_path} - "
-                "serving the TF-IDF baseline. Run: python train_all.py"
+                f"[SentimentAnalyzer] No trained sentiment weights found "
+                f"(looked in: {looked_in}) - serving the TF-IDF baseline.\n"
+                f"  Fetch trained models: uv run python scripts/download_models.py --user <hf-user>\n"
+                f"  Or train them:        uv run python train_all.py --profile <gpu>"
             )
 
-        if self._has_weights(transformer_path):
+        if transformer_path is not None:
             try:
                 from transformers import AutoTokenizer, AutoModelForSequenceClassification
                 self.device = resolve_device("Sentiment inference")
@@ -67,13 +79,6 @@ class SentimentAnalyzer:
                 self._build_inmemory_fallback()
         else:
             self._build_inmemory_fallback()
-
-    @staticmethod
-    def _has_weights(path: str) -> bool:
-        return any(
-            os.path.exists(os.path.join(path, name))
-            for name in ("model.safetensors", "pytorch_model.bin", "tf_model.h5")
-        )
 
     def describe(self) -> dict:
         """Which model is answering, and on what device. Surfaced by /health."""

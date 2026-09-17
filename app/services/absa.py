@@ -15,12 +15,12 @@ Falls back to the lexicon when model artifacts are absent, so the service still
 starts on a checkout that has not downloaded models.
 """
 
-import os
 from pathlib import Path
 
-MODELS_DIR = Path(os.getenv("MODELS_DIR", "models"))
-ATE_DIR = MODELS_DIR / "ate"
-APC_DIR = MODELS_DIR / "apc"
+from app.services.artifacts import MODELS_DIR, has_weights, model_dir
+
+ATE_DIR = model_dir("ate")
+APC_DIR = model_dir("apc")
 
 MAX_ASPECTS = 8
 MIN_SPAN_CHARS = 2
@@ -31,9 +31,6 @@ SENTIMENT_RANK = {"Negative": 0, "Neutral": 1, "Positive": 2}
 
 
 def artifacts_present() -> bool:
-    def has_weights(path: Path) -> bool:
-        return any((path / name).exists()
-                   for name in ("model.safetensors", "pytorch_model.bin"))
     return has_weights(ATE_DIR) and has_weights(APC_DIR)
 
 
@@ -70,9 +67,9 @@ class ABSAPipeline:
 
         if not artifacts_present():
             raise FileNotFoundError(
-                f"ABSA models not found in {MODELS_DIR}/. Train them with "
-                f"`python train_all.py` or fetch them with "
-                f"`python scripts/download_models.py`."
+                f"ABSA models not found in {MODELS_DIR}. Fetch them with "
+                f"`uv run python scripts/download_models.py --user <hf-user>` "
+                f"or train them with `uv run python train_all.py --profile <gpu>`."
             )
 
         self._device = self._device or resolve_device("ABSA inference")
@@ -254,7 +251,8 @@ def build_extractor(sentiment_analyzer=None):
     from app.services.aspect_extraction import AspectExtractor
 
     print(
-        f"[ABSA] No models in {MODELS_DIR}/ - falling back to the keyword "
-        f"lexicon. Fetch them with: python scripts/download_models.py"
+        f"[ABSA] No aspect models in {MODELS_DIR} - falling back to the keyword "
+        f"lexicon. Fetch them with: "
+        f"uv run python scripts/download_models.py --user <hf-user>"
     )
     return AspectExtractor(sentiment_analyzer=sentiment_analyzer)

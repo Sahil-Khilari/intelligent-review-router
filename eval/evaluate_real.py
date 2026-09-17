@@ -6,7 +6,7 @@ Supersedes paper/evaluate_pipeline.py, which measured against a corpus where
 for the synthetic comparison; this one produces numbers that mean something
 outside this repository, because SemEval-2014 is a published benchmark.
 
-    python eval/evaluate_real.py
+    uv run python eval/evaluate_real.py
 
 Writes eval/metrics.json.
 """
@@ -23,9 +23,10 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.services.bio_alignment import ATE_ID2LABEL, find_spans  # noqa: E402
+from app.services.artifacts import REPO_ROOT  # noqa: E402
 from train_common import DATA_DIR, MODELS_DIR, load_jsonl  # noqa: E402
 
-OUT = Path("eval/metrics.json")
+OUT = REPO_ROOT / "eval" / "metrics.json"
 
 
 def banner(title):
@@ -124,13 +125,14 @@ def evaluate_sentiment(rows, analyzer):
     weighted = f1_score(y_true, y_pred, average="weighted", zero_division=0)
     latencies = np.array(latencies)
 
-    print(f"model_type = {analyzer.model_type}")
+    print(f"model_type = {analyzer.model_type} | model_path = {analyzer.model_path}")
     print(f"accuracy {accuracy:.4f} | macro F1 {macro:.4f} | weighted F1 {weighted:.4f}")
     print(classification_report(y_true, y_pred, digits=4, zero_division=0))
     print(f"latency ms: mean {latencies.mean():.1f}  p95 {np.percentile(latencies, 95):.1f}")
 
     return {"accuracy": accuracy, "macro_f1": macro, "weighted_f1": weighted,
             "model_type": analyzer.model_type,
+            "model_path": analyzer.model_path,
             "latency_ms": {"mean": float(latencies.mean()),
                            "p95": float(np.percentile(latencies, 95))}}
 
@@ -142,8 +144,8 @@ def evaluate_end_to_end(rows, ticket_service, limit=200):
     There is no gold department label for Amazon reviews, so this reports the
     distribution of decisions and the low-confidence rate rather than an
     accuracy. Grading against auto-generated labels would repeat the original
-    mistake of measuring against a generator; see data/gold/ for the labelled
-    set that makes an accuracy figure meaningful.
+    mistake of measuring against a generator. A hand-corrected gold set (not yet
+    built) is what would make an accuracy figure meaningful here.
     """
     banner("END-TO-END ROUTING (distributional, not graded)")
     departments, priorities, latencies = Counter(), Counter(), []
@@ -193,8 +195,9 @@ def main():
 
     if not artifacts_present():
         raise SystemExit(
-            f"No ABSA models in {MODELS_DIR}/. Run train_all.py, or fetch them "
-            f"with scripts/download_models.py."
+            f"No ABSA models in {MODELS_DIR}. Train them with "
+            f"`uv run python train_all.py --profile <gpu>`, or fetch them with "
+            f"`uv run python scripts/download_models.py --user <hf-user>`."
         )
 
     semeval_test = load_jsonl(DATA_DIR / "semeval_test.jsonl", limit=args.limit)

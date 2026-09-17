@@ -4,7 +4,7 @@ Fetches trained models from the Hugging Face Hub into models/.
 Training happens once on a GPU machine; everything else downloads. Run this
 after cloning, or any time models/ is empty:
 
-    python scripts/download_models.py --user <your-hf-username>
+    uv run python scripts/download_models.py --user <your-hf-username>
 
 Private repos need a token: `huggingface-cli login`, or set HF_TOKEN.
 """
@@ -16,14 +16,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from train_common import MODELS_DIR  # noqa: E402
+from app.services.artifacts import MODELS_DIR, has_weights, model_dir  # noqa: E402
 
 TASKS = ["ate", "apc", "sentiment"]
-WEIGHT_FILES = ("model.safetensors", "pytorch_model.bin")
-
-
-def has_weights(path: Path) -> bool:
-    return any((path / name).exists() for name in WEIGHT_FILES)
 
 
 def download(repo_id: str, target: Path, token: str | None) -> bool:
@@ -55,7 +50,7 @@ def main():
     results = {}
 
     for task in TASKS:
-        target = MODELS_DIR / task
+        target = model_dir(task)
         if has_weights(target) and not args.force:
             print(f"  {task}: already present, skipping (--force to refetch)")
             results[task] = True
@@ -71,7 +66,8 @@ def main():
         print(
             f"\n{len(missing)} model(s) unavailable: {missing}\n"
             f"The service will start on its fallbacks and report degraded=true "
-            f"at /health. Train them with: python train_all.py --profile <gpu>"
+            f"at /health. Train them with: "
+            f"uv run python train_all.py --profile <gpu> --push-to-user {args.user}"
         )
         return 1
 
