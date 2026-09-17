@@ -238,28 +238,31 @@ def build_amazon(total_rows, smoke):
 
     sources = resolve_amazon_files()
     per_class = max(1, total_rows // 3)
+    # Each category contributes an equal share. Filling the whole quota from
+    # whichever category came first meant a 20k-review run was 100% All_Beauty
+    # while the manifest listed five categories.
+    per_category = -(-per_class // len(sources))
     print(f"Streaming {AMAZON_ID} from {len(sources)} categories "
-          f"(target {per_class} per class) ...")
+          f"(target {per_class} per class, {per_category} per class per category) ...")
 
     buckets = {label: [] for label in LABELS}
     seen_hashes = set()
 
     for config, url in sources:
-        if all(len(buckets[l]) >= per_class for l in LABELS):
-            break
         print(f"  {config} ...")
         stream = load_dataset("json", data_files=url, split="train", streaming=True)
+        taken = {label: 0 for label in LABELS}
 
         scanned = 0
         for record in stream:
-            if all(len(buckets[l]) >= per_class for l in LABELS):
+            if all(taken[l] >= per_category for l in LABELS):
                 break
             if scanned > MAX_SCAN_PER_CONFIG:
                 break
             scanned += 1
 
             label = rating_to_label(record.get("rating"))
-            if label is None or len(buckets[label]) >= per_class:
+            if label is None or taken[label] >= per_category:
                 continue
 
             title = (record.get("title") or "").strip()
@@ -273,9 +276,12 @@ def build_amazon(total_rows, smoke):
                 continue
             seen_hashes.add(digest)
             buckets[label].append({"text": text, "label": label, "category": config})
+            taken[label] += 1
 
-        counts = ", ".join(f"{l}={len(buckets[l])}" for l in LABELS)
-        print(f"    scanned {scanned}, have {counts}")
+        counts = ", ".join(f"{l}={taken[l]}" for l in LABELS)
+        short = [l for l in LABELS if taken[l] < per_category]
+        print(f"    scanned {scanned}, took {counts}"
+              + (f"  (short of {per_category} for {short})" if short else ""))
 
     # Balance to the scarcest class (3-star reviews), so accuracy is not
     # inflated by a skew the model can exploit.
@@ -309,7 +315,13 @@ def build_amazon(total_rows, smoke):
     return {
         "splits": splits,
         "stats": {
-            "categories": [c for c, _ in sources],
+            # What actually made it into the corpus, not what was requested.
+            "categories": [c for c, _ in sources
+                           if any(r["category"] == c for r in rows)],
+            "categories_requested": [c for c, _ in sources],
+            "category_counts": {
+                k: dict(Counter(r["category"] for r in v)) for k, v in splits.items()
+            },
             "per_class_after_balance": smallest,
             "counts": {k: len(v) for k, v in splits.items()},
             "class_counts": {
