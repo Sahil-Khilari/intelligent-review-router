@@ -48,8 +48,9 @@ STAGES = [
 
 
 def run(profile, hub_user=None, only=None, model=None, resume=True):
-    report_environment()
-    summary, started = {}, time.time()
+    # Recorded so results can name the hardware they came from.
+    environment = report_environment()
+    summary, started = {"_environment": environment}, time.time()
 
     for task, module in STAGES:
         if only and task not in only:
