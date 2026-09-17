@@ -28,6 +28,7 @@ from app.services.bio_alignment import (  # noqa: E402
     tag_offsets,
 )
 from app.services.device import resolve_device  # noqa: E402
+from train_progress import ProgressCallback  # noqa: E402
 from train_common import (  # noqa: E402
     DATA_DIR,
     TrainConfig,
@@ -207,6 +208,7 @@ def train(cfg: TrainConfig) -> dict:
         processing_class=tokenizer,
         data_collator=DataCollatorForTokenClassification(tokenizer),
         compute_metrics=make_compute_metrics(),
+        callbacks=[ProgressCallback(TASK)],
     )
 
     trainer.train(resume_from_checkpoint=resume_point(cfg, checkpoint_dir))

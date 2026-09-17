@@ -194,6 +194,20 @@ uv run python train_all.py --profile 4090 --push-to-user <your-hf-username>
 Almost all of that time is review sentiment: 5 epochs over ~320k reviews on the
 `4090` profile. Peak memory measured at about 12 GB of 24.
 
+**Watch progress** from a second terminal while training runs:
+
+```powershell
+uv run python scripts/watch_training.py            # live view, refreshes every 5 s
+uv run python scripts/watch_training.py --history  # everything that has happened so far
+```
+
+It shows each stage (pending / running / done / failed), the current epoch and
+step, speed, time remaining, latest loss and validation score, and GPU memory.
+It warns if training becomes much slower than it was earlier in the stage —
+on a laptop GPU that usually means memory has spilled into system RAM — and if
+the progress file stops updating. The same information is in
+`logs/training_progress.json` and `logs/training_progress.log`.
+
 **If a run is interrupted, run the same command again** — it resumes from the
 last checkpoint. Checkpoints are tied to the exact configuration, so a smoke run
 can never be resumed into a real one. Use `--no-resume` to start over. On Colab,

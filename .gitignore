@@ -60,3 +60,4 @@ _export_fallback/
 *.db-shm
 /checkpoints/
 /eval/metrics.json
+/logs/

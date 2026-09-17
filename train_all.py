@@ -37,6 +37,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import train_apc  # noqa: E402
 import train_ate  # noqa: E402
+import train_progress as progress  # noqa: E402
 import train_sentiment  # noqa: E402
 from train_common import config_for, output_root, report_environment  # noqa: E402
 
@@ -51,6 +52,9 @@ def run(profile, hub_user=None, only=None, model=None, resume=True):
     # Recorded so results can name the hardware they came from.
     environment = report_environment()
     summary, started = {"_environment": environment}, time.time()
+    selected = [task for task, _ in STAGES if not only or task in only]
+    progress.run_started(profile, selected)
+    print("Follow progress in another terminal: uv run python scripts/watch_training.py")
 
     for task, module in STAGES:
         if only and task not in only:
@@ -67,6 +71,7 @@ def run(profile, hub_user=None, only=None, model=None, resume=True):
             cfg.hub_model_id = f"{hub_user}/review-router-{task}"
 
         stage_started = time.time()
+        progress.stage_started(task)
         try:
             result = module.train(cfg)
             summary[task] = {
@@ -79,6 +84,11 @@ def run(profile, hub_user=None, only=None, model=None, resume=True):
                     if isinstance(v, float)
                 },
             }
+            progress.stage_finished(
+                task, "done", summary[task]["minutes"],
+                headline={k: v for k, v in summary[task]["metrics"].items()
+                          if k.startswith("test_") and ("f1" in k or "accuracy" in k)},
+            )
         except Exception as exc:
             # One stage failing must not discard the others.
             traceback.print_exc()
@@ -87,9 +97,12 @@ def run(profile, hub_user=None, only=None, model=None, resume=True):
                 "minutes": round((time.time() - stage_started) / 60, 1),
                 "error": f"{type(exc).__name__}: {exc}",
             }
+            progress.stage_finished(task, "failed", summary[task]["minutes"],
+                                    error=summary[task]["error"])
 
     summary["_total_minutes"] = round((time.time() - started) / 60, 1)
     summary["_profile"] = profile
+    progress.run_finished(summary["_total_minutes"])
 
     root = output_root(profile)
     root.mkdir(parents=True, exist_ok=True)
