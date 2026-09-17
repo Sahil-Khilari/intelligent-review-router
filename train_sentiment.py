@@ -25,11 +25,13 @@ from train_common import (  # noqa: E402
     LABEL2ID,
     LABELS,
     TrainConfig,
+    checkpoint_dir_for,
     config_for,
     load_jsonl,
     load_model_fp32,
     push_if_requested,
     report_environment,
+    resume_point,
     safe_save,
     warmup_steps_for,
     write_model_card,
@@ -101,8 +103,12 @@ def train(cfg: TrainConfig) -> dict:
         label2id=LABEL2ID,
     )
 
+    checkpoint_dir = checkpoint_dir_for(
+        cfg, TASK, {split: len(ds) for split, ds in encoded.items()}
+    )
+
     args = TrainingArguments(
-        output_dir=f"checkpoints/{TASK}",
+        output_dir=str(checkpoint_dir),
         eval_strategy="epoch",
         save_strategy="epoch",
         learning_rate=cfg.lr,
@@ -120,6 +126,10 @@ def train(cfg: TrainConfig) -> dict:
         metric_for_best_model="macro_f1",
         greater_is_better=True,
         fp16=cfg.fp16 and device.type == "cuda",
+        # Real reviews have a median of 74 tokens but 7% hit the 256 cap, so
+        # almost every random batch of 64 contains a long one and pads the
+        # whole batch to 256. Grouping similar lengths removes that waste.
+        train_sampling_strategy="group_by_length",
         seed=cfg.seed,
         report_to=[],
     )
@@ -134,7 +144,7 @@ def train(cfg: TrainConfig) -> dict:
         compute_metrics=make_compute_metrics(),
     )
 
-    trainer.train()
+    trainer.train(resume_from_checkpoint=resume_point(cfg, checkpoint_dir))
 
     val_metrics = trainer.evaluate(encoded["val"], metric_key_prefix="val")
     test_metrics = trainer.evaluate(encoded["test"], metric_key_prefix="test")
@@ -168,6 +178,8 @@ def main():
     parser.add_argument("--profile", default="4090")
     parser.add_argument("--model", default=None)
     parser.add_argument("--push-to", default=None)
+    parser.add_argument("--no-resume", action="store_true",
+                        help="ignore checkpoints from an interrupted identical run")
     args = parser.parse_args()
 
     cfg = config_for(args.profile, TASK)
@@ -175,6 +187,8 @@ def main():
         cfg.model_name = args.model
     if args.push_to:
         cfg.push_to_hub, cfg.hub_model_id = True, args.push_to
+    if args.no_resume:
+        cfg.resume = False
 
     train(cfg)
     return 0

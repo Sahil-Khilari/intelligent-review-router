@@ -12,7 +12,7 @@ Train/test overlap is asserted empty and raises on violation, rather than being
 reported as a statistic after the fact.
 
 Usage:
-    python data/fetch_real_datasets.py --profile 4090
+    uv run python data/fetch_real_datasets.py --profile 4090
 """
 
 import argparse
@@ -24,7 +24,11 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-OUT_DIR = Path("data/real")
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from app.services.artifacts import DATA_DIR  # noqa: E402
+
+OUT_DIR = DATA_DIR
 SEMEVAL_ID = "FangornGuardian/semeval-2014-absa"
 AMAZON_ID = "McAuley-Lab/Amazon-Reviews-2023"
 
@@ -47,7 +51,10 @@ PROFILE_AMAZON_ROWS = {
 LABELS = ("Negative", "Neutral", "Positive")
 MIN_CHARS, MAX_CHARS = 20, 2000
 SEED = 42
-MAX_SCAN_PER_CONFIG = 400_000
+# Upper bound per category; scanning stops as soon as every class is full.
+# 3-star reviews are ~7% of Amazon reviews, so the 4090 target of 133k neutral
+# needs ~2M records - which a 5 x 400k cap only just covered.
+MAX_SCAN_PER_CONFIG = 1_000_000
 
 
 def normalise(text: str) -> str:

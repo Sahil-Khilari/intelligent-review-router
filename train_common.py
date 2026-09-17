@@ -5,6 +5,7 @@ All training logic lives in the train_*.py modules. train_all.py and the Colab
 notebook only sequence calls into them, so the two venues cannot drift apart.
 """
 
+import hashlib
 import json
 import math
 import os
@@ -12,9 +13,13 @@ import shutil
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 
-DATA_DIR = Path("data/real")
-MODELS_DIR = Path("models")
-EXPORT_FALLBACK = Path("_export_fallback")
+from app.services.artifacts import DATA_DIR, MODELS_DIR, REPO_ROOT
+
+EXPORT_FALLBACK = REPO_ROOT / "_export_fallback"
+
+# Put this on persistent storage (e.g. Google Drive on Colab) so an interrupted
+# run can resume instead of starting over.
+CHECKPOINT_DIR = Path(os.getenv("CHECKPOINT_DIR") or REPO_ROOT / "checkpoints")
 
 DEFAULT_BASE_MODEL = "microsoft/deberta-v3-base"
 
@@ -48,6 +53,7 @@ class TrainConfig:
     fp16: bool = True
     push_to_hub: bool = False
     hub_model_id: str | None = None
+    resume: bool = True
     extra: dict = field(default_factory=dict)
 
     def to_json(self) -> dict:
@@ -63,6 +69,21 @@ PROFILES = {
 }
 
 
+SMOKE_DIR_NAME = "_smoke"
+
+
+def output_root(profile: str) -> Path:
+    """
+    Where a profile's trained models are written.
+
+    Smoke runs go to models/_smoke/, which serving never reads. Writing them to
+    models/ replaced servable models with 200-row, one-epoch ones - a smoke
+    sentiment model rated "top notch quality and works amazingly well" as
+    Negative - while /health still reported the service as healthy.
+    """
+    return MODELS_DIR / SMOKE_DIR_NAME if profile == "smoke" else MODELS_DIR
+
+
 def config_for(profile: str, task: str, **overrides) -> TrainConfig:
     if profile not in PROFILES:
         raise ValueError(f"Unknown profile {profile!r}; expected one of {list(PROFILES)}")
@@ -70,7 +91,7 @@ def config_for(profile: str, task: str, **overrides) -> TrainConfig:
     batch = p["sentiment_batch"] if task == "sentiment" else p["batch"]
     cfg = TrainConfig(
         profile=profile,
-        output_dir=str(MODELS_DIR / task),
+        output_dir=str(output_root(profile) / task),
         batch_size=batch,
         grad_accum=p["grad_accum"],
         epochs=p["epochs"],
@@ -113,10 +134,52 @@ def load_model_fp32(auto_class, model_name: str, **kwargs):
     return model
 
 
+def checkpoint_dir_for(cfg: "TrainConfig", task: str, split_sizes: dict) -> Path:
+    """
+    Checkpoints are keyed by a fingerprint of the exact run.
+
+    Resuming must only ever continue an identical run. Keying by task alone
+    would let `--profile 4090` "resume" from a `--profile smoke` checkpoint -
+    inheriting 200-row weights, optimizer state and a learning-rate schedule
+    built for a different number of steps - which would silently corrupt the
+    one run that matters.
+    """
+    identity = {
+        "task": task,
+        "profile": cfg.profile,
+        "model": cfg.model_name,
+        "lr": cfg.lr,
+        "batch": cfg.batch_size,
+        "grad_accum": cfg.grad_accum,
+        "epochs": cfg.epochs,
+        "max_length": cfg.max_length,
+        "seed": cfg.seed,
+        "splits": split_sizes,
+    }
+    digest = hashlib.sha1(json.dumps(identity, sort_keys=True).encode()).hexdigest()[:10]
+    path = CHECKPOINT_DIR / f"{task}-{cfg.profile}-{digest}"
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "run_identity.json").write_text(json.dumps(identity, indent=2), encoding="utf-8")
+    return path
+
+
+def resume_point(cfg: "TrainConfig", checkpoint_dir: Path) -> str | None:
+    """Latest checkpoint of this exact run, or None to start fresh."""
+    if not cfg.resume:
+        return None
+    from transformers.trainer_utils import get_last_checkpoint
+
+    last = get_last_checkpoint(str(checkpoint_dir))
+    if last:
+        print(f"[resume] continuing from {last}")
+    return last
+
+
 def load_jsonl(path: Path, limit: int | None = None) -> list[dict]:
     if not path.exists():
         raise SystemExit(
-            f"Missing {path}. Run: python data/fetch_real_datasets.py --profile <profile>"
+            f"Missing {path}. Build the corpus first: "
+            f"uv run python data/fetch_real_datasets.py --profile <profile>"
         )
     rows = []
     with path.open("r", encoding="utf-8") as handle:
